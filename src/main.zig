@@ -103,6 +103,12 @@ fn renderPath(cwd: []const u8, home: []const u8, git_repo_dir: ?[]const u8, tty:
         break :blk cwd[home.len..];
     } else cwd;
 
+    if (visible_path.len == 0) {
+        // If there's nothing left after stripping the home prefix, exit early
+        // so that we only render a tilde without a trailing slash.
+        return;
+    }
+
     // If the visible path is too long, we are going to abbreviate some
     // segments like fish does natively.
     const abbreviate = std.mem.count(u8, visible_path, "/") > 3;
@@ -159,6 +165,13 @@ test "`renderPath` renders the home directory as a tilde" {
     // Abbreviation calc also only includes visible path segments, so this does
     // not get abbreviated.
     try std.testing.expectEqualStrings("~/.doom.d/weather-machine", list.items);
+}
+
+test "`renderPath` renders only a tilde when we are in the home directory" {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    try renderPath("/home/isker", "/home/isker", null, std.io.tty.Config.no_color, list.writer());
+    try std.testing.expectEqualStrings("~", list.items);
 }
 
 fn renderGitHead(head: GitHead, output: anytype) !void {
