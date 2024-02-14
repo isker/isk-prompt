@@ -39,7 +39,7 @@ pub fn main() !void {
         try renderCmdDuration(value, output);
     }
 
-    if (std.os.getenv("pipestatus")) |pipestatus| {
+    if (std.os.getenv("PIPESTATUS")) |pipestatus| {
         try renderStatusCode(pipestatus, tty_config, output);
     }
 
@@ -252,8 +252,13 @@ fn renderStatusCode(pipestatus: []const u8, tty: std.io.tty.Config, output: anyt
     if (!std.mem.eql(u8, pipestatus, "0")) {
         try output.writeAll(" ");
         try tty.setColor(output, .red);
-        try tty.setColor(output, .bold);
-        try output.writeAll(pipestatus);
+        var statuses = std.mem.tokenizeScalar(u8, pipestatus, ' ');
+        while (statuses.next()) |status| {
+            try output.writeAll(status);
+            if (statuses.peek() != null) {
+                try output.writeAll(" | ");
+            }
+        }
         try tty.setColor(output, .reset);
     }
 }
@@ -268,13 +273,13 @@ test "`renderStatusCode` does nothing for status 0" {
 test "`renderStatusCode` renders statuses without colors" {
     var list = std.ArrayList(u8).init(std.testing.allocator);
     defer list.deinit();
-    try renderStatusCode("0 | 1", std.io.tty.Config.no_color, list.writer());
+    try renderStatusCode("0 1", std.io.tty.Config.no_color, list.writer());
     try std.testing.expectEqualStrings(" 0 | 1", list.items);
 }
 
 test "`renderStatusCode` renders statuses with colors" {
     var list = std.ArrayList(u8).init(std.testing.allocator);
     defer list.deinit();
-    try renderStatusCode("0 | 1", std.io.tty.Config.escape_codes, list.writer());
-    try std.testing.expectEqualStrings(" \x1b[31m\x1b[1m0 | 1\x1b[0m", list.items);
+    try renderStatusCode("0 1", std.io.tty.Config.escape_codes, list.writer());
+    try std.testing.expectEqualStrings(" \x1b[31m0 | 1\x1b[0m", list.items);
 }
