@@ -249,24 +249,40 @@ test "`renderCmdDuration` doesn't pad zeros on the first unit to be rendered" {
 }
 
 fn renderStatusCode(pipestatus: []const u8, tty: std.io.tty.Config, output: anytype) !void {
-    if (!std.mem.eql(u8, pipestatus, "0")) {
-        try output.writeAll(" ");
-        try tty.setColor(output, .red);
-        var statuses = std.mem.tokenizeScalar(u8, pipestatus, ' ');
-        while (statuses.next()) |status| {
-            try output.writeAll(status);
-            if (statuses.peek() != null) {
-                try output.writeAll(" | ");
-            }
+    var statuses = std.mem.tokenizeScalar(u8, pipestatus, ' ');
+    while (statuses.next()) |status| {
+        if (!std.mem.eql(u8, status, "0")) {
+            // There was a nonzero status.
+            break;
         }
-        try tty.setColor(output, .reset);
+    } else {
+        // All statuses were 0.
+        return;
     }
+
+    statuses.reset();
+    try output.writeAll(" ");
+    try tty.setColor(output, .red);
+    while (statuses.next()) |status| {
+        try output.writeAll(status);
+        if (statuses.peek() != null) {
+            try output.writeAll(" | ");
+        }
+    }
+    try tty.setColor(output, .reset);
 }
 
 test "`renderStatusCode` does nothing for status 0" {
     var list = std.ArrayList(u8).init(std.testing.allocator);
     defer list.deinit();
     try renderStatusCode("0", std.io.tty.Config.no_color, list.writer());
+    try std.testing.expectEqualStrings("", list.items);
+}
+
+test "`renderStatusCode` does nothing for a pipeline with all statuses 0" {
+    var list = std.ArrayList(u8).init(std.testing.allocator);
+    defer list.deinit();
+    try renderStatusCode("0 0 0", std.io.tty.Config.no_color, list.writer());
     try std.testing.expectEqualStrings("", list.items);
 }
 
