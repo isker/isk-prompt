@@ -21,9 +21,9 @@ pub fn main() !void {
 
     // PWD is supposed to always be defined, and is superior to `getcwd` for our
     // purposes in that it does not resolve symbolic links.
-    const cwd = std.os.getenv("PWD") orelse unreachable;
+    const cwd = std.posix.getenv("PWD") orelse unreachable;
     // Likewise HOME is supposed to always be defined.
-    const home = std.os.getenv("HOME") orelse unreachable;
+    const home = std.posix.getenv("HOME") orelse unreachable;
 
     // I don't want branches with names longer than this anyway.
     var git_head_buf: [80]u8 = undefined;
@@ -35,11 +35,11 @@ pub fn main() !void {
         try renderGitHead(value.head, output);
     }
 
-    if (std.os.getenv("CMD_DURATION")) |value| {
+    if (std.posix.getenv("CMD_DURATION")) |value| {
         try renderCmdDuration(value, output);
     }
 
-    if (std.os.getenv("PIPESTATUS")) |pipestatus| {
+    if (std.posix.getenv("PIPESTATUS")) |pipestatus| {
         try renderStatusCode(pipestatus, tty_config, output);
     }
 
