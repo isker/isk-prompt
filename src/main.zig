@@ -8,16 +8,16 @@ const std = @import("std");
 //
 // And it does no heap allocations :^).
 pub fn main() !void {
-    const stdout = std.io.getStdOut();
-    var bw = std.io.bufferedWriter(stdout.writer());
-    const output = bw.writer();
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout = &stdout_writer.interface;
     // We don't detect the config as somehow the way fish is calling this
     // function results in `isTty` being false, so there is no natural color
     // support. It's a shell prompt; there is a TTY.
     const tty_config = std.io.tty.Config.escape_codes;
 
     // Lead with an empty line to better distinguish the prompt.
-    try output.writeByte('\n');
+    try stdout.writeByte('\n');
 
     // PWD is supposed to always be defined, and is superior to `getcwd` for our
     // purposes in that it does not resolve symbolic links.
@@ -29,23 +29,23 @@ pub fn main() !void {
     var git_head_buf: [80]u8 = undefined;
     const git_state = try findGitState(cwd, &git_head_buf);
 
-    try renderPath(cwd, home, if (git_state) |s| s.dir else null, tty_config, output);
+    try renderPath(cwd, home, if (git_state) |s| s.dir else null, tty_config, stdout);
 
     if (git_state) |value| {
-        try renderGitHead(value.head, output);
+        try renderGitHead(value.head, stdout);
     }
 
     if (std.posix.getenv("CMD_DURATION")) |value| {
-        try renderCmdDuration(value, output);
+        try renderCmdDuration(value, stdout);
     }
 
     if (std.posix.getenv("PIPESTATUS")) |pipestatus| {
-        try renderStatusCode(pipestatus, tty_config, output);
+        try renderStatusCode(pipestatus, tty_config, stdout);
     }
 
-    try output.writeAll("\nλ ");
+    try stdout.writeAll("\nλ ");
 
-    try bw.flush();
+    try stdout.flush();
 }
 
 /// Walks up the cwd path, looking for usage of the world's most misapplied
@@ -93,7 +93,7 @@ const GitState = struct {
     dir: []const u8,
 };
 
-fn renderPath(cwd: []const u8, home: []const u8, git_repo_dir: ?[]const u8, tty: std.io.tty.Config, output: anytype) !void {
+fn renderPath(cwd: []const u8, home: []const u8, git_repo_dir: ?[]const u8, tty: std.io.tty.Config, output: *std.Io.Writer) !void {
     var components = try std.fs.path.componentIterator(cwd);
     // HOME prefix -> ~
     const visible_path = if (!std.mem.eql(u8, home, "/") and std.mem.startsWith(u8, cwd, home)) blk: {
@@ -138,43 +138,43 @@ fn renderPath(cwd: []const u8, home: []const u8, git_repo_dir: ?[]const u8, tty:
 }
 
 test "`renderPath` renders short paths" {
-    var list = std.ArrayList(u8).init(std.testing.allocator);
-    defer list.deinit();
-    try renderPath("/etc/ssh/authorized_keys.d", "/home/isker", null, std.io.tty.Config.no_color, list.writer());
-    try std.testing.expectEqualStrings("/etc/ssh/authorized_keys.d", list.items);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try renderPath("/etc/ssh/authorized_keys.d", "/home/isker", null, std.io.tty.Config.no_color, &output.writer);
+    try std.testing.expectEqualStrings("/etc/ssh/authorized_keys.d", output.written());
 }
 
 test "`renderPath` bolds path segments" {
-    var list = std.ArrayList(u8).init(std.testing.allocator);
-    defer list.deinit();
-    try renderPath("/etc/ssh/authorized_keys.d", "/home/isker", null, std.io.tty.Config.escape_codes, list.writer());
-    try std.testing.expectEqualStrings("/\x1b[1metc\x1b[0m/\x1b[1mssh\x1b[0m/\x1b[1mauthorized_keys.d\x1b[0m", list.items);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try renderPath("/etc/ssh/authorized_keys.d", "/home/isker", null, std.io.tty.Config.escape_codes, &output.writer);
+    try std.testing.expectEqualStrings("/\x1b[1metc\x1b[0m/\x1b[1mssh\x1b[0m/\x1b[1mauthorized_keys.d\x1b[0m", output.written());
 }
 
 test "`renderPath` abbreviates long paths" {
-    var list = std.ArrayList(u8).init(std.testing.allocator);
-    defer list.deinit();
-    try renderPath("/etc/ただ/Åland/linux/drivers/interconnect/qcom", "/home/isker", "/etc/ただ/Åland/linux", std.io.tty.Config.no_color, list.writer());
-    try std.testing.expectEqualStrings("/e/た/Å/linux/d/i/qcom", list.items);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try renderPath("/etc/ただ/Åland/linux/drivers/interconnect/qcom", "/home/isker", "/etc/ただ/Åland/linux", std.io.tty.Config.no_color, &output.writer);
+    try std.testing.expectEqualStrings("/e/た/Å/linux/d/i/qcom", output.written());
 }
 
 test "`renderPath` renders the home directory as a tilde" {
-    var list = std.ArrayList(u8).init(std.testing.allocator);
-    defer list.deinit();
-    try renderPath("/home/isker/.doom.d/weather-machine", "/home/isker", null, std.io.tty.Config.no_color, list.writer());
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try renderPath("/home/isker/.doom.d/weather-machine", "/home/isker", null, std.io.tty.Config.no_color, &output.writer);
     // Abbreviation calc also only includes visible path segments, so this does
     // not get abbreviated.
-    try std.testing.expectEqualStrings("~/.doom.d/weather-machine", list.items);
+    try std.testing.expectEqualStrings("~/.doom.d/weather-machine", output.written());
 }
 
 test "`renderPath` renders only a tilde when we are in the home directory" {
-    var list = std.ArrayList(u8).init(std.testing.allocator);
-    defer list.deinit();
-    try renderPath("/home/isker", "/home/isker", null, std.io.tty.Config.no_color, list.writer());
-    try std.testing.expectEqualStrings("~", list.items);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try renderPath("/home/isker", "/home/isker", null, std.io.tty.Config.no_color, &output.writer);
+    try std.testing.expectEqualStrings("~", output.written());
 }
 
-fn renderGitHead(head: GitHead, output: anytype) !void {
+fn renderGitHead(head: GitHead, output: *std.Io.Writer) !void {
     switch (head) {
         GitHeadKind.branch => |branch| {
             try output.writeAll(" ");
@@ -188,20 +188,20 @@ fn renderGitHead(head: GitHead, output: anytype) !void {
 }
 
 test "`renderGitHead` renders branches" {
-    var list = std.ArrayList(u8).init(std.testing.allocator);
-    defer list.deinit();
-    try renderGitHead(GitHead{ .branch = "master" }, list.writer());
-    try std.testing.expectEqualStrings(" master", list.items);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try renderGitHead(GitHead{ .branch = "master" }, &output.writer);
+    try std.testing.expectEqualStrings(" master", output.written());
 }
 
 test "`renderGitHead` renders commits" {
-    var list = std.ArrayList(u8).init(std.testing.allocator);
-    defer list.deinit();
-    try renderGitHead(GitHead{ .commit = "accb64187cd3148a7f6139f7ea68e145a987bc6c" }, list.writer());
-    try std.testing.expectEqualStrings(" @accb6418", list.items);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try renderGitHead(GitHead{ .commit = "accb64187cd3148a7f6139f7ea68e145a987bc6c" }, &output.writer);
+    try std.testing.expectEqualStrings(" @accb6418", output.written());
 }
 
-fn renderCmdDuration(cmd_duration: []const u8, output: anytype) !void {
+fn renderCmdDuration(cmd_duration: []const u8, output: *std.Io.Writer) !void {
     const duration_ms = std.fmt.parseUnsigned(u64, cmd_duration, 10) catch 0;
     // Only render "long" commands.
     if (duration_ms >= 3000) {
@@ -217,14 +217,14 @@ fn renderCmdDuration(cmd_duration: []const u8, output: anytype) !void {
         }) |unit| {
             if (ms_remaining >= unit.ms) {
                 const units = ms_remaining / unit.ms;
-                try std.fmt.formatInt(units, 10, .lower, .{
+                try output.printInt(units, 10, .lower, .{
                     // Do not pad the first unit to be printed.
                     .width = if (first) blk: {
                         first = false;
                         break :blk 0;
                     } else unit.width,
                     .fill = '0',
-                }, output);
+                });
                 try output.writeByte(unit.sep);
                 ms_remaining -= units * unit.ms;
             }
@@ -233,22 +233,22 @@ fn renderCmdDuration(cmd_duration: []const u8, output: anytype) !void {
 }
 
 test "`renderCmdDuration` renders command duration" {
-    var list = std.ArrayList(u8).init(std.testing.allocator);
-    defer list.deinit();
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
     const long_duration = try std.fmt.allocPrint(std.testing.allocator, "{d}", .{std.math.maxInt(u32)});
     defer std.testing.allocator.free(long_duration);
-    try renderCmdDuration(long_duration, list.writer());
-    try std.testing.expectEqualStrings(" 49d17h02m47s", list.items);
+    try renderCmdDuration(long_duration, &output.writer);
+    try std.testing.expectEqualStrings(" 49d17h02m47s", output.written());
 }
 
 test "`renderCmdDuration` doesn't pad zeros on the first unit to be rendered" {
-    var list = std.ArrayList(u8).init(std.testing.allocator);
-    defer list.deinit();
-    try renderCmdDuration("325000", list.writer());
-    try std.testing.expectEqualStrings(" 5m25s", list.items);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try renderCmdDuration("325000", &output.writer);
+    try std.testing.expectEqualStrings(" 5m25s", output.written());
 }
 
-fn renderStatusCode(pipestatus: []const u8, tty: std.io.tty.Config, output: anytype) !void {
+fn renderStatusCode(pipestatus: []const u8, tty: std.io.tty.Config, output: *std.Io.Writer) !void {
     var statuses = std.mem.tokenizeScalar(u8, pipestatus, ' ');
     while (statuses.next()) |status| {
         if (!std.mem.eql(u8, status, "0")) {
@@ -273,29 +273,29 @@ fn renderStatusCode(pipestatus: []const u8, tty: std.io.tty.Config, output: anyt
 }
 
 test "`renderStatusCode` does nothing for status 0" {
-    var list = std.ArrayList(u8).init(std.testing.allocator);
-    defer list.deinit();
-    try renderStatusCode("0", std.io.tty.Config.no_color, list.writer());
-    try std.testing.expectEqualStrings("", list.items);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try renderStatusCode("0", std.io.tty.Config.no_color, &output.writer);
+    try std.testing.expectEqualStrings("", output.written());
 }
 
 test "`renderStatusCode` does nothing for a pipeline with all statuses 0" {
-    var list = std.ArrayList(u8).init(std.testing.allocator);
-    defer list.deinit();
-    try renderStatusCode("0 0 0", std.io.tty.Config.no_color, list.writer());
-    try std.testing.expectEqualStrings("", list.items);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try renderStatusCode("0 0 0", std.io.tty.Config.no_color, &output.writer);
+    try std.testing.expectEqualStrings("", output.written());
 }
 
 test "`renderStatusCode` renders statuses without colors" {
-    var list = std.ArrayList(u8).init(std.testing.allocator);
-    defer list.deinit();
-    try renderStatusCode("0 1", std.io.tty.Config.no_color, list.writer());
-    try std.testing.expectEqualStrings(" 0 | 1", list.items);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try renderStatusCode("0 1", std.io.tty.Config.no_color, &output.writer);
+    try std.testing.expectEqualStrings(" 0 | 1", output.written());
 }
 
 test "`renderStatusCode` renders statuses with colors" {
-    var list = std.ArrayList(u8).init(std.testing.allocator);
-    defer list.deinit();
-    try renderStatusCode("0 1", std.io.tty.Config.escape_codes, list.writer());
-    try std.testing.expectEqualStrings(" \x1b[31m0 | 1\x1b[0m", list.items);
+    var output = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer output.deinit();
+    try renderStatusCode("0 1", std.io.tty.Config.escape_codes, &output.writer);
+    try std.testing.expectEqualStrings(" \x1b[31m0 | 1\x1b[0m", output.written());
 }
